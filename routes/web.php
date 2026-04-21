@@ -29,17 +29,18 @@ Route::middleware(['auth.session'])->group(function () {
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 
     // Permintaan Barang
-    Route::get('/permintaan', [PermintaanController::class, 'index'])->name('permintaan.index');
-    Route::get('/permintaan/create', [PermintaanController::class, 'create'])->name('permintaan.create');
-    Route::post('/permintaan', [PermintaanController::class, 'store'])->name('permintaan.store');
-    Route::get('/permintaan/{permintaan}', [PermintaanController::class, 'show'])->name('permintaan.show');
-    Route::post('/permintaan/{permintaan}/ajukan', [PermintaanController::class, 'ajukan'])->name('permintaan.ajukan');
-    Route::post('/permintaan/{permintaan}/setujui', [PermintaanController::class, 'setujui'])->name('permintaan.setujui');
-    Route::post('/permintaan/{permintaan}/tolak', [PermintaanController::class, 'tolak'])->name('permintaan.tolak');
-    Route::post('/permintaan/{permintaan}/kirim-operator', [PermintaanController::class, 'kirimOperator'])->name('permintaan.kirim_operator');
-    Route::post('/permintaan/{permintaan}/eksekusi', [PermintaanController::class, 'eksekusi'])->name('permintaan.eksekusi');
-    Route::patch('/permintaan/{permintaan}/batal', [PermintaanController::class, 'batal'])->name('permintaan.batal');
-
+Route::get('/permintaan',                              [PermintaanController::class, 'index'])->name('permintaan.index');
+Route::get('/permintaan/create',                       [PermintaanController::class, 'create'])->name('permintaan.create');
+Route::post('/permintaan',                             [PermintaanController::class, 'store'])->name('permintaan.store');
+Route::get('/permintaan/{permintaan}',                 [PermintaanController::class, 'show'])->name('permintaan.show');
+Route::get('/permintaan/{permintaan}/surat',           [PermintaanController::class, 'surat'])->name('permintaan.surat'); // ← BARU
+Route::post('/permintaan/{permintaan}/ajukan',         [PermintaanController::class, 'ajukan'])->name('permintaan.ajukan');
+Route::post('/permintaan/{permintaan}/setujui',        [PermintaanController::class, 'setujui'])->name('permintaan.setujui');
+Route::post('/permintaan/{permintaan}/tolak',          [PermintaanController::class, 'tolak'])->name('permintaan.tolak');
+Route::post('/permintaan/{permintaan}/kirim-operator', [PermintaanController::class, 'kirimOperator'])->name('permintaan.kirim_operator');
+Route::post('/permintaan/{permintaan}/eksekusi',       [PermintaanController::class, 'eksekusi'])->name('permintaan.eksekusi');
+Route::patch('/permintaan/{permintaan}/batal',         [PermintaanController::class, 'batal'])->name('permintaan.batal');
+ 
     // Stok
     Route::get('/stok', [StokController::class, 'index'])->name('stok.index');
     Route::post('/stok/koreksi', [StokController::class, 'koreksi'])->name('stok.koreksi');

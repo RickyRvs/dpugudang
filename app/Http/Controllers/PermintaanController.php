@@ -142,6 +142,20 @@ class PermintaanController extends Controller
         return view('permintaan.show', compact('permintaan'));
     }
 
+    public function surat(PermintaanBarang $permintaan)
+{
+    $this->authorizePermintaan($permintaan);
+ 
+    // Draft belum bisa dilihat sebagai surat
+    if ($permintaan->status === 'draft') {
+        abort(403, 'Surat belum tersedia. Ajukan permintaan terlebih dahulu.');
+    }
+ 
+    $permintaan->load(['pembuat', 'penyetuju', 'pelaksana', 'details.barang', 'kantor']);
+ 
+    return view('permintaan.surat', compact('permintaan'));
+}
+
     public function ajukan(PermintaanBarang $permintaan)
     {
         $this->requireRole(['manajerial']);
@@ -169,49 +183,75 @@ class PermintaanController extends Controller
     }
 
     public function setujui(Request $request, PermintaanBarang $permintaan)
-    {
-        $this->requireRole(['pimpinan']);
-        $this->authorizePermintaan($permintaan);
-        if ($permintaan->status !== 'diajukan') abort(403);
-
-        $request->validate(['catatan_pimpinan' => 'nullable|string']);
-
-        $ttdPath = null;
-        if ($request->hasFile('ttd')) {
-            $ttdPath = $request->file('ttd')->store('ttd', 'public');
+{
+    $this->requireRole(['pimpinan']);
+    $this->authorizePermintaan($permintaan);
+    if ($permintaan->status !== 'diajukan') abort(403);
+ 
+    $request->validate([
+        'catatan_pimpinan' => 'nullable|string',
+        'ttd'              => 'nullable|file|image|max:2048',
+        'ttd_canvas'       => 'nullable|string', // base64 dari canvas
+    ]);
+ 
+    // ── Proses TTD ──────────────────────────────────────────────────
+    $ttdPath = null;
+ 
+    if ($request->hasFile('ttd')) {
+        // Upload file biasa
+        $ttdPath = $request->file('ttd')->store('ttd', 'public');
+ 
+    } elseif ($request->filled('ttd_canvas')) {
+        // Canvas base64 → simpan sebagai PNG
+        $base64  = preg_replace('#^data:image/\w+;base64,#i', '', $request->ttd_canvas);
+        $imgData = base64_decode($base64);
+ 
+        if ($imgData !== false && strlen($imgData) > 100) { // validasi minimal ada data
+            $filename = 'ttd/pimpinan_' . uniqid('', true) . '.png';
+            \Illuminate\Support\Facades\Storage::disk('public')->put($filename, $imgData);
+            $ttdPath  = $filename;
         }
-
-        DB::transaction(function () use ($request, $permintaan, $ttdPath) {
-            if ($request->jumlah_disetujui) {
-                foreach ($request->jumlah_disetujui as $detailId => $jumlah) {
-                    DetailPermintaan::where('id', $detailId)->where('permintaan_id', $permintaan->id)
-                        ->update(['jumlah_disetujui' => max(0, (int) $jumlah)]);
-                }
-            }
-
-            $permintaan->update([
-                'status'            => 'disetujui',
-                'disetujui_oleh'    => session('user_id'),
-                'tgl_disetujui'     => now(),
-                'catatan_pimpinan'  => $request->catatan_pimpinan,
-                'ttd_pimpinan'      => $ttdPath,
-                'nama_ttd_pimpinan' => session('user_nama'),
-            ]);
-
-            AuditLog::catat('setujui_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
-
-            Notifikasi::create([
-                'user_id'       => $permintaan->dibuat_oleh,
-                'judul'         => 'Permintaan Disetujui',
-                'pesan'         => "Permintaan {$permintaan->nomor_permintaan} telah disetujui oleh " . session('user_nama') . ".",
-                'tipe'          => 'disetujui',
-                'url'           => route('permintaan.show', $permintaan->id),
-                'permintaan_id' => $permintaan->id,
-            ]);
-        });
-
-        return back()->with('toast', 'Permintaan berhasil disetujui!');
     }
+ 
+    DB::transaction(function () use ($request, $permintaan, $ttdPath) {
+ 
+        // Update jumlah disetujui per item
+        if ($request->jumlah_disetujui) {
+            foreach ($request->jumlah_disetujui as $detailId => $jumlah) {
+                DetailPermintaan::where('id', $detailId)
+                    ->where('permintaan_id', $permintaan->id)
+                    ->update(['jumlah_disetujui' => max(0, (int) $jumlah)]);
+            }
+        }
+ 
+        $permintaan->update([
+            'status'            => 'disetujui',
+            'disetujui_oleh'    => session('user_id'),
+            'tgl_disetujui'     => now(),
+            'catatan_pimpinan'  => $request->catatan_pimpinan,
+            'ttd_pimpinan'      => $ttdPath,
+            'nama_ttd_pimpinan' => session('user_nama'),
+        ]);
+ 
+        AuditLog::catat('setujui_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
+ 
+        // Notifikasi ke pengaju
+        Notifikasi::create([
+            'user_id'       => $permintaan->dibuat_oleh,
+            'judul'         => 'Permintaan Disetujui & Ditandatangani',
+            'pesan'         => "Permintaan {$permintaan->nomor_permintaan} telah disetujui oleh "
+                               . session('user_nama') . ". Silakan teruskan ke Operator Gudang.",
+            'tipe'          => 'disetujui',
+            'url'           => route('permintaan.show', $permintaan->id),
+            'permintaan_id' => $permintaan->id,
+        ]);
+    });
+ 
+    // Redirect ke halaman surat agar pimpinan bisa lihat hasil TTD-nya
+    return redirect()
+        ->route('permintaan.surat', $permintaan->id)
+        ->with('toast', 'Permintaan berhasil disetujui dan ditandatangani!');
+}
 
     public function tolak(Request $request, PermintaanBarang $permintaan)
     {

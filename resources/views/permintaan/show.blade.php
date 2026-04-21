@@ -25,10 +25,22 @@ $labelMap = ['draft'=>'Draft','diajukan'=>'Menunggu Approval Pimpinan','disetuju
         <div style="font-family:'Sora',sans-serif;font-weight:800;font-size:20px;color:#0f172a;">{{ $permintaan->nomor_permintaan }}</div>
         <div style="font-size:13px;color:#64748b;margin-top:4px;">{{ $permintaan->keperluan }}</div>
       </div>
-      <div style="text-align:right;">
-        <div style="font-size:11px;color:#94a3b8;">Dibuat oleh</div>
-        <div style="font-weight:700;color:#0f172a;">{{ $permintaan->pembuat->nama }}</div>
-        <div style="font-size:11px;color:#94a3b8;">{{ $permintaan->created_at->format('d M Y H:i') }}</div>
+
+      {{-- PERUBAHAN 1: Tambah tombol "Lihat Surat Resmi" di header kanan --}}
+      <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px;">
+        @if($permintaan->status !== 'draft')
+        <a href="{{ route('permintaan.surat', $permintaan->id) }}"
+           style="display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:9px;background:linear-gradient(135deg,#1d4ed8,#1e40af);color:#fff;text-decoration:none;font-family:'Sora',sans-serif;font-size:12px;font-weight:700;box-shadow:0 2px 8px rgba(29,78,216,.25);"
+           target="_blank">
+          <span class="material-symbols-outlined fill-icon" style="font-size:15px;">description</span>
+          Lihat Surat Resmi
+        </a>
+        @endif
+        <div>
+          <div style="font-size:11px;color:#94a3b8;">Dibuat oleh</div>
+          <div style="font-weight:700;color:#0f172a;">{{ $permintaan->pembuat->nama }}</div>
+          <div style="font-size:11px;color:#94a3b8;">{{ $permintaan->created_at->format('d M Y H:i') }}</div>
+        </div>
       </div>
     </div>
 
@@ -148,16 +160,18 @@ $labelMap = ['draft'=>'Draft','diajukan'=>'Menunggu Approval Pimpinan','disetuju
         @endif
       </div>
 
-      {{-- ===== AKSI PIMPINAN ===== --}}
+      {{-- ===== PERUBAHAN 2: AKSI PIMPINAN → redirect ke halaman surat untuk TTD online ===== --}}
       @if(session('user_role') === 'pimpinan' && $permintaan->status === 'diajukan')
       <div class="card" style="padding:16px;border:2px solid #fef08a;background:#fefce8;">
-        <div style="font-weight:700;font-size:13px;color:#854d0e;margin-bottom:12px;">⏳ Menunggu Persetujuan Anda</div>
-        <button type="button" onclick="openModal('modal-setujui')" class="btn-green" style="width:100%;justify-content:center;margin-bottom:8px;">
-          <span class="material-symbols-outlined fill-icon" style="font-size:16px;">verified</span> Setujui Permintaan
-        </button>
-        <button type="button" onclick="openModal('modal-tolak')" class="btn-danger" style="width:100%;justify-content:center;">
-          <span class="material-symbols-outlined" style="font-size:16px;">cancel</span> Tolak Permintaan
-        </button>
+        <div style="font-weight:700;font-size:13px;color:#854d0e;margin-bottom:8px;">⏳ Menunggu Persetujuan Anda</div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:14px;">
+          Buka surat resmi untuk meninjau rincian dan menandatangani secara digital.
+        </div>
+        <a href="{{ route('permintaan.surat', $permintaan->id) }}"
+           class="btn-green" style="width:100%;justify-content:center;display:flex;align-items:center;gap:6px;text-decoration:none;margin-bottom:8px;">
+          <span class="material-symbols-outlined fill-icon" style="font-size:16px;">draw</span>
+          Buka Surat & Tanda Tangani
+        </a>
       </div>
       @endif
 
@@ -193,14 +207,29 @@ $labelMap = ['draft'=>'Draft','diajukan'=>'Menunggu Approval Pimpinan','disetuju
       </div>
       @endif
 
-      {{-- ===== AKSI OPERATOR ===== --}}
-      @if(session('user_role') === 'operator_gudang' && in_array($permintaan->status, ['dikirim_operator','diproses']))
+      {{-- ===== PERUBAHAN 3: AKSI OPERATOR → tambah tombol Lihat Dokumen ===== --}}
+      @if(session('user_role') === 'operator_gudang' && in_array($permintaan->status, ['dikirim_operator','diproses','selesai']))
       <div class="card" style="padding:16px;border:2px solid #fed7aa;background:#fff7ed;">
         <div style="font-weight:700;font-size:13px;color:#c2410c;margin-bottom:4px;">📦 Tugas Anda</div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:12px;">Cek barang & eksekusi stok sesuai permintaan yang sudah disetujui pimpinan.</div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:12px;">
+          Cek barang secara fisik sesuai dokumen yang disetujui pimpinan, lalu eksekusi stok.
+        </div>
+        {{-- Tombol Lihat Dokumen --}}
+        <a href="{{ route('permintaan.surat', $permintaan->id) }}"
+           target="_blank"
+           style="width:100%;justify-content:center;display:flex;align-items:center;gap:6px;text-decoration:none;margin-bottom:8px;font-size:12px;font-weight:600;padding:8px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#1d4ed8;">
+          <span class="material-symbols-outlined" style="font-size:14px;">description</span>
+          Lihat Dokumen Resmi (+ TTD Pimpinan)
+        </a>
+        @if(in_array($permintaan->status, ['dikirim_operator','diproses']))
         <button type="button" onclick="openModal('modal-eksekusi')" class="btn-or" style="width:100%;justify-content:center;">
           <span class="material-symbols-outlined fill-icon" style="font-size:16px;">task_alt</span> Eksekusi & Update Stok
         </button>
+        @else
+        <div style="text-align:center;font-size:12px;color:#16a34a;font-weight:700;padding:8px;">
+          ✅ Sudah Dieksekusi
+        </div>
+        @endif
       </div>
       @endif
 
@@ -212,75 +241,8 @@ $labelMap = ['draft'=>'Draft','diajukan'=>'Menunggu Approval Pimpinan','disetuju
   </div>
 </div>
 
-{{-- Modal Setujui --}}
-@if(session('user_role') === 'pimpinan' && $permintaan->status === 'diajukan')
-<div class="modal" id="modal-setujui">
-  <div>
-    <div class="card" style="padding:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
-        <div style="font-family:'Sora',sans-serif;font-weight:700;font-size:16px;color:#0f172a;">✅ Setujui Permintaan</div>
-        <button onclick="closeModal('modal-setujui')" style="border:none;background:none;cursor:pointer;color:#94a3b8;font-size:20px;">✕</button>
-      </div>
-      <form method="POST" action="{{ route('permintaan.setujui', $permintaan->id) }}" enctype="multipart/form-data">
-        @csrf
-        <div style="margin-bottom:14px;">
-          <label style="display:block;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Catatan (Opsional)</label>
-          <textarea name="catatan_pimpinan" class="field" placeholder="Catatan atau pesan untuk manajerial..."></textarea>
-        </div>
-        {{-- Jumlah override per item --}}
-        <div style="margin-bottom:14px;">
-          <label style="display:block;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Jumlah Disetujui (per item)</label>
-          @foreach($permintaan->details as $det)
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:10px;background:#f8fafc;border-radius:10px;">
-            <div style="flex:1;font-size:12.5px;font-weight:600;color:#0f172a;">{{ $det->barang->nama }}</div>
-            <div style="font-size:11px;color:#94a3b8;">Diminta: {{ $det->jumlah_diminta }}</div>
-            <input type="number" name="jumlah_disetujui[{{ $det->id }}]" value="{{ $det->jumlah_diminta }}" min="0" max="{{ $det->jumlah_diminta }}"
-              style="width:80px;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;text-align:center;outline:none;"/>
-            <span style="font-size:11px;color:#64748b;">{{ $det->satuan }}</span>
-          </div>
-          @endforeach
-        </div>
-        <div style="margin-bottom:16px;">
-          <label style="display:block;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Upload TTD (opsional)</label>
-          <input type="file" name="ttd" accept="image/*" class="field" style="padding:7px;"/>
-          <div style="font-size:11px;color:#94a3b8;margin-top:4px;">Format: JPG/PNG, max 2MB</div>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button type="button" onclick="closeModal('modal-setujui')" class="btn-ghost" style="flex:1;justify-content:center;">Batal</button>
-          <button type="submit" class="btn-green" style="flex:1;justify-content:center;">
-            <span class="material-symbols-outlined fill-icon" style="font-size:16px;">verified</span> Setujui
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
-
-{{-- Modal Tolak --}}
-<div class="modal" id="modal-tolak">
-  <div>
-    <div class="card" style="padding:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
-        <div style="font-family:'Sora',sans-serif;font-weight:700;font-size:16px;color:#991b1b;">❌ Tolak Permintaan</div>
-        <button onclick="closeModal('modal-tolak')" style="border:none;background:none;cursor:pointer;color:#94a3b8;font-size:20px;">✕</button>
-      </div>
-      <form method="POST" action="{{ route('permintaan.tolak', $permintaan->id) }}">
-        @csrf
-        <div style="margin-bottom:14px;">
-          <label style="display:block;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Alasan Penolakan *</label>
-          <textarea name="catatan_pimpinan" class="field" placeholder="Jelaskan alasan penolakan..." required></textarea>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button type="button" onclick="closeModal('modal-tolak')" class="btn-ghost" style="flex:1;justify-content:center;">Batal</button>
-          <button type="submit" class="btn-danger" style="flex:1;justify-content:center;">
-            <span class="material-symbols-outlined" style="font-size:16px;">cancel</span> Tolak
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
-@endif
+{{-- ===== Modal Setujui (tetap ada sebagai fallback, tapi tidak tampil untuk pimpinan - diganti redirect ke surat) ===== --}}
+{{-- Modal ini tidak lagi ditampilkan karena aksi pimpinan sekarang diarahkan ke halaman surat --}}
 
 {{-- Modal Eksekusi Operator --}}
 @if(session('user_role') === 'operator_gudang' && in_array($permintaan->status, ['dikirim_operator','diproses']))
