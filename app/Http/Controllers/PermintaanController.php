@@ -11,6 +11,7 @@ use App\Models\Notifikasi;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class PermintaanController extends Controller
 {
@@ -21,15 +22,11 @@ class PermintaanController extends Controller
 
         $query = PermintaanBarang::with('pembuat', 'kantor')->latest();
 
-        // ── Isolasi per kantor ──────────────────────────
         if ($isAdmin) {
-            // Admin bisa filter by kantor atau lihat semua
             if ($request->kantor_id) $query->where('kantor_id', $request->kantor_id);
         } else {
-            // Semua role selain admin hanya lihat kantor aktif
             $query->forKantor();
 
-            // Filter tambahan per role
             if ($role === 'manajerial') {
                 $query->where('dibuat_oleh', session('user_id'));
             } elseif ($role === 'operator_gudang') {
@@ -37,14 +34,13 @@ class PermintaanController extends Controller
             }
         }
 
-        // ── Filter tab & search ─────────────────────────
         $filter = $request->get('filter', 'semua');
         match($filter) {
-            'diajukan'          => $query->where('status', 'diajukan'),
-            'disetujui'         => $query->where('status', 'disetujui'),
-            'dikirim_operator'  => $query->where('status', 'dikirim_operator'),
-            'selesai'           => $query->where('status', 'selesai'),
-            default             => null,
+            'diajukan'         => $query->where('status', 'diajukan'),
+            'disetujui'        => $query->where('status', 'disetujui'),
+            'dikirim_operator' => $query->where('status', 'dikirim_operator'),
+            'selesai'          => $query->where('status', 'selesai'),
+            default            => null,
         };
 
         if ($request->q) {
@@ -64,7 +60,6 @@ class PermintaanController extends Controller
     public function create()
     {
         $this->requireRole(['manajerial']);
-        // Barang yang bisa dipilih hanya milik kantor aktif
         $barangList = Barang::forKantor()->where('is_active', true)->with('kategori')->orderBy('nama')->get();
         return view('permintaan.create', compact('barangList'));
     }
@@ -83,23 +78,20 @@ class PermintaanController extends Controller
         ]);
 
         DB::transaction(function () use ($request) {
-            $status = $request->action === 'ajukan' ? 'diajukan' : 'draft';
-
+            // Simpan selalu sebagai draft dulu — TTD manajerial dilakukan di halaman surat
             $permintaan = PermintaanBarang::create([
-                'kantor_id'          => session('kantor_id'), // ← kantor pengaju
+                'kantor_id'          => session('kantor_id'),
                 'nomor_permintaan'   => PermintaanBarang::generateNomor($request->jenis),
                 'jenis'              => $request->jenis,
                 'keperluan'          => $request->keperluan,
                 'departemen_tujuan'  => $request->departemen_tujuan,
                 'tanggal_dibutuhkan' => $request->tanggal_dibutuhkan,
                 'catatan_manajerial' => $request->catatan_manajerial,
-                'status'             => $status,
+                'status'             => 'draft',
                 'dibuat_oleh'        => session('user_id'),
-                'tgl_diajukan'       => $status === 'diajukan' ? now() : null,
             ]);
 
             foreach ($request->items as $item) {
-                // Validasi: barang harus milik kantor aktif
                 $barang = Barang::where('id', $item['barang_id'])
                     ->where('kantor_id', session('kantor_id'))
                     ->firstOrFail();
@@ -114,25 +106,15 @@ class PermintaanController extends Controller
             }
 
             AuditLog::catat('buat_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
-
-            if ($status === 'diajukan') {
-                // Notif pimpinan yang memiliki akses ke kantor ini
-                $kantor = \App\Models\Kantor::find(session('kantor_id'));
-                $kantor?->users()->where('role', 'pimpinan')->where('is_active', true)
-                    ->each(function ($p) use ($permintaan) {
-                        Notifikasi::create([
-                            'user_id'       => $p->id,
-                            'judul'         => 'Permintaan Baru Menunggu Approval',
-                            'pesan'         => "Permintaan {$permintaan->nomor_permintaan} dari " . session('user_nama') . " membutuhkan persetujuan Anda.",
-                            'tipe'          => 'permintaan_baru',
-                            'url'           => route('permintaan.show', $permintaan->id),
-                            'permintaan_id' => $permintaan->id,
-                        ]);
-                    });
-            }
         });
 
-        return redirect()->route('permintaan.index')->with('toast', 'Permintaan berhasil dibuat!');
+        // Setelah buat, langsung arahkan ke halaman surat untuk TTD
+        $permintaan = PermintaanBarang::where('dibuat_oleh', session('user_id'))
+            ->where('status', 'draft')->latest()->first();
+
+        return redirect()
+            ->route('permintaan.surat', $permintaan->id)
+            ->with('toast', 'Permintaan dibuat! Silakan tanda tangani untuk mengajukan.');
     }
 
     public function show(PermintaanBarang $permintaan)
@@ -143,115 +125,160 @@ class PermintaanController extends Controller
     }
 
     public function surat(PermintaanBarang $permintaan)
-{
-    $this->authorizePermintaan($permintaan);
- 
-    // Draft belum bisa dilihat sebagai surat
-    if ($permintaan->status === 'draft') {
-        abort(403, 'Surat belum tersedia. Ajukan permintaan terlebih dahulu.');
-    }
- 
-    $permintaan->load(['pembuat', 'penyetuju', 'pelaksana', 'details.barang', 'kantor']);
- 
-    return view('permintaan.surat', compact('permintaan'));
-}
+    {
+        $this->authorizePermintaan($permintaan);
 
+        if ($permintaan->status === 'dibatalkan') {
+            abort(403, 'Surat sudah dibatalkan.');
+        }
+
+        $permintaan->load(['pembuat', 'penyetuju', 'pelaksana', 'details.barang', 'kantor']);
+        return view('permintaan.surat', compact('permintaan'));
+    }
+
+    // ── TTD Manajerial — manajerial tandatangan lalu otomatis diajukan ──────
+    public function ttdManajerial(Request $request, PermintaanBarang $permintaan)
+    {
+        $this->requireRole(['manajerial']);
+        $this->authorizePermintaan($permintaan);
+
+        if ($permintaan->status !== 'draft' || $permintaan->dibuat_oleh != session('user_id')) {
+            abort(403, 'Tidak dapat menandatangani permintaan ini.');
+        }
+
+        $request->validate([
+            'ttd_canvas' => 'nullable|string',
+            'ttd'        => 'nullable|file|image|max:2048',
+        ]);
+
+        // ── Proses TTD ──────────────────────────────────────────────────────
+        $ttdPath = null;
+
+        if ($request->hasFile('ttd')) {
+            $ttdPath = $request->file('ttd')->store('ttd', 'public');
+
+        } elseif ($request->filled('ttd_canvas')) {
+            $base64  = preg_replace('#^data:image/\w+;base64,#i', '', $request->ttd_canvas);
+            $imgData = base64_decode($base64);
+
+            if ($imgData !== false && strlen($imgData) > 100) {
+                $filename = 'ttd/manajerial_' . uniqid('', true) . '.png';
+                Storage::disk('public')->put($filename, $imgData);
+                $ttdPath = $filename;
+            }
+        }
+
+        if (!$ttdPath) {
+            return back()->withErrors(['ttd' => 'Tanda tangan wajib diisi sebelum mengajukan.']);
+        }
+
+        DB::transaction(function () use ($permintaan, $ttdPath) {
+            $permintaan->update([
+                'ttd_manajerial'      => $ttdPath,
+                'nama_ttd_manajerial' => session('user_nama'),
+                'tgl_ttd_manajerial'  => now(),
+                'status'              => 'diajukan',
+                'tgl_diajukan'        => now(),
+            ]);
+
+            AuditLog::catat('ajukan_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
+
+            // Notif pimpinan
+            $kantor = \App\Models\Kantor::find($permintaan->kantor_id);
+            $kantor?->users()->where('role', 'pimpinan')->where('is_active', true)
+                ->each(function ($p) use ($permintaan) {
+                    Notifikasi::create([
+                        'user_id'       => $p->id,
+                        'judul'         => 'Permintaan Baru Menunggu Approval',
+                        'pesan'         => "Permintaan {$permintaan->nomor_permintaan} dari "
+                                          . session('user_nama') . " membutuhkan persetujuan Anda.",
+                        'tipe'          => 'permintaan_baru',
+                        'url'           => route('permintaan.show', $permintaan->id),
+                        'permintaan_id' => $permintaan->id,
+                    ]);
+                });
+        });
+
+        return redirect()
+            ->route('permintaan.surat', $permintaan->id)
+            ->with('toast', 'Permintaan berhasil ditandatangani dan diajukan ke Pimpinan!');
+    }
+
+    // ── Ajukan manual (dari halaman detail, jika belum punya TTD) ───────────
     public function ajukan(PermintaanBarang $permintaan)
     {
+        // Sekarang redirect ke surat untuk TTD dulu
         $this->requireRole(['manajerial']);
         $this->authorizePermintaan($permintaan);
         if ($permintaan->status !== 'draft' || $permintaan->dibuat_oleh != session('user_id')) abort(403);
 
-        $permintaan->update(['status' => 'diajukan', 'tgl_diajukan' => now()]);
-        AuditLog::catat('ajukan_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
-
-        // Notif pimpinan di kantor yang sama
-        $kantor = \App\Models\Kantor::find($permintaan->kantor_id);
-        $kantor?->users()->where('role', 'pimpinan')->where('is_active', true)
-            ->each(function ($p) use ($permintaan) {
-                Notifikasi::create([
-                    'user_id'       => $p->id,
-                    'judul'         => 'Permintaan Baru Menunggu Approval',
-                    'pesan'         => "Permintaan {$permintaan->nomor_permintaan} membutuhkan persetujuan Anda.",
-                    'tipe'          => 'permintaan_baru',
-                    'url'           => route('permintaan.show', $permintaan->id),
-                    'permintaan_id' => $permintaan->id,
-                ]);
-            });
-
-        return back()->with('toast', 'Permintaan telah diajukan ke Pimpinan.');
+        return redirect()
+            ->route('permintaan.surat', $permintaan->id)
+            ->with('toast_info', 'Tanda tangani surat terlebih dahulu untuk mengajukan.');
     }
 
     public function setujui(Request $request, PermintaanBarang $permintaan)
-{
-    $this->requireRole(['pimpinan']);
-    $this->authorizePermintaan($permintaan);
-    if ($permintaan->status !== 'diajukan') abort(403);
- 
-    $request->validate([
-        'catatan_pimpinan' => 'nullable|string',
-        'ttd'              => 'nullable|file|image|max:2048',
-        'ttd_canvas'       => 'nullable|string', // base64 dari canvas
-    ]);
- 
-    // ── Proses TTD ──────────────────────────────────────────────────
-    $ttdPath = null;
- 
-    if ($request->hasFile('ttd')) {
-        // Upload file biasa
-        $ttdPath = $request->file('ttd')->store('ttd', 'public');
- 
-    } elseif ($request->filled('ttd_canvas')) {
-        // Canvas base64 → simpan sebagai PNG
-        $base64  = preg_replace('#^data:image/\w+;base64,#i', '', $request->ttd_canvas);
-        $imgData = base64_decode($base64);
- 
-        if ($imgData !== false && strlen($imgData) > 100) { // validasi minimal ada data
-            $filename = 'ttd/pimpinan_' . uniqid('', true) . '.png';
-            \Illuminate\Support\Facades\Storage::disk('public')->put($filename, $imgData);
-            $ttdPath  = $filename;
-        }
-    }
- 
-    DB::transaction(function () use ($request, $permintaan, $ttdPath) {
- 
-        // Update jumlah disetujui per item
-        if ($request->jumlah_disetujui) {
-            foreach ($request->jumlah_disetujui as $detailId => $jumlah) {
-                DetailPermintaan::where('id', $detailId)
-                    ->where('permintaan_id', $permintaan->id)
-                    ->update(['jumlah_disetujui' => max(0, (int) $jumlah)]);
+    {
+        $this->requireRole(['pimpinan']);
+        $this->authorizePermintaan($permintaan);
+        if ($permintaan->status !== 'diajukan') abort(403);
+
+        $request->validate([
+            'catatan_pimpinan' => 'nullable|string',
+            'ttd'              => 'nullable|file|image|max:2048',
+            'ttd_canvas'       => 'nullable|string',
+        ]);
+
+        $ttdPath = null;
+
+        if ($request->hasFile('ttd')) {
+            $ttdPath = $request->file('ttd')->store('ttd', 'public');
+        } elseif ($request->filled('ttd_canvas')) {
+            $base64  = preg_replace('#^data:image/\w+;base64,#i', '', $request->ttd_canvas);
+            $imgData = base64_decode($base64);
+
+            if ($imgData !== false && strlen($imgData) > 100) {
+                $filename = 'ttd/pimpinan_' . uniqid('', true) . '.png';
+                Storage::disk('public')->put($filename, $imgData);
+                $ttdPath  = $filename;
             }
         }
- 
-        $permintaan->update([
-            'status'            => 'disetujui',
-            'disetujui_oleh'    => session('user_id'),
-            'tgl_disetujui'     => now(),
-            'catatan_pimpinan'  => $request->catatan_pimpinan,
-            'ttd_pimpinan'      => $ttdPath,
-            'nama_ttd_pimpinan' => session('user_nama'),
-        ]);
- 
-        AuditLog::catat('setujui_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
- 
-        // Notifikasi ke pengaju
-        Notifikasi::create([
-            'user_id'       => $permintaan->dibuat_oleh,
-            'judul'         => 'Permintaan Disetujui & Ditandatangani',
-            'pesan'         => "Permintaan {$permintaan->nomor_permintaan} telah disetujui oleh "
-                               . session('user_nama') . ". Silakan teruskan ke Operator Gudang.",
-            'tipe'          => 'disetujui',
-            'url'           => route('permintaan.show', $permintaan->id),
-            'permintaan_id' => $permintaan->id,
-        ]);
-    });
- 
-    // Redirect ke halaman surat agar pimpinan bisa lihat hasil TTD-nya
-    return redirect()
-        ->route('permintaan.surat', $permintaan->id)
-        ->with('toast', 'Permintaan berhasil disetujui dan ditandatangani!');
-}
+
+        DB::transaction(function () use ($request, $permintaan, $ttdPath) {
+            if ($request->jumlah_disetujui) {
+                foreach ($request->jumlah_disetujui as $detailId => $jumlah) {
+                    DetailPermintaan::where('id', $detailId)
+                        ->where('permintaan_id', $permintaan->id)
+                        ->update(['jumlah_disetujui' => max(0, (int) $jumlah)]);
+                }
+            }
+
+            $permintaan->update([
+                'status'            => 'disetujui',
+                'disetujui_oleh'    => session('user_id'),
+                'tgl_disetujui'     => now(),
+                'catatan_pimpinan'  => $request->catatan_pimpinan,
+                'ttd_pimpinan'      => $ttdPath,
+                'nama_ttd_pimpinan' => session('user_nama'),
+            ]);
+
+            AuditLog::catat('setujui_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
+
+            Notifikasi::create([
+                'user_id'       => $permintaan->dibuat_oleh,
+                'judul'         => 'Permintaan Disetujui & Ditandatangani',
+                'pesan'         => "Permintaan {$permintaan->nomor_permintaan} telah disetujui oleh "
+                                   . session('user_nama') . ". Silakan teruskan ke Operator Gudang.",
+                'tipe'          => 'disetujui',
+                'url'           => route('permintaan.show', $permintaan->id),
+                'permintaan_id' => $permintaan->id,
+            ]);
+        });
+
+        return redirect()
+            ->route('permintaan.surat', $permintaan->id)
+            ->with('toast', 'Permintaan berhasil disetujui dan ditandatangani!');
+    }
 
     public function tolak(Request $request, PermintaanBarang $permintaan)
     {
@@ -277,7 +304,7 @@ class PermintaanController extends Controller
             'permintaan_id' => $permintaan->id,
         ]);
 
-        return back()->with('toast', 'Permintaan telah ditolak.', 'warning');
+        return back()->with('toast', 'Permintaan telah ditolak.');
     }
 
     public function kirimOperator(PermintaanBarang $permintaan)
@@ -289,7 +316,6 @@ class PermintaanController extends Controller
         $permintaan->update(['status' => 'dikirim_operator', 'tgl_dikirim_operator' => now()]);
         AuditLog::catat('kirim_operator', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
 
-        // Notif operator yang terdaftar di kantor yang sama
         $kantor = \App\Models\Kantor::find($permintaan->kantor_id);
         $kantor?->users()->where('role', 'operator_gudang')->where('is_active', true)
             ->each(function ($op) use ($permintaan) {
@@ -319,7 +345,7 @@ class PermintaanController extends Controller
                     ->where('permintaan_id', $permintaan->id)->first();
                 if (!$detail) continue;
 
-                $jumlah = max(0, (int) $jumlah);
+                $jumlah      = max(0, (int) $jumlah);
                 $detail->update(['jumlah_dieksekusi' => $jumlah]);
 
                 $barang      = Barang::find($detail->barang_id);
@@ -331,7 +357,7 @@ class PermintaanController extends Controller
                 $barang->update(['stok_tersedia' => $stokSesudah]);
 
                 RiwayatStok::create([
-                    'kantor_id'     => $permintaan->kantor_id, // ← kantor dari permintaan
+                    'kantor_id'     => $permintaan->kantor_id,
                     'barang_id'     => $barang->id,
                     'permintaan_id' => $permintaan->id,
                     'user_id'       => session('user_id'),
@@ -374,22 +400,19 @@ class PermintaanController extends Controller
 
         $permintaan->update(['status' => 'dibatalkan']);
         AuditLog::catat('batal_permintaan', 'permintaan', $permintaan->id, $permintaan->nomor_permintaan);
-        return back()->with('toast', 'Permintaan dibatalkan.', 'warning');
+        return back()->with('toast', 'Permintaan dibatalkan.');
     }
 
-    // ── Helpers ──────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────
     private function requireRole(array $roles): void
     {
-        // Admin bisa akses semua
         if (session('user_role') === 'admin') return;
         if (!in_array(session('user_role'), $roles)) abort(403, 'Akses ditolak.');
     }
 
     private function authorizePermintaan(PermintaanBarang $permintaan): void
     {
-        // Admin bypass
         if (session('user_role') === 'admin') return;
-        // Permintaan harus dari kantor yang sama dengan session aktif
         if ($permintaan->kantor_id !== session('kantor_id')) abort(403, 'Akses ditolak.');
     }
 }

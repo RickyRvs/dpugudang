@@ -40,6 +40,7 @@ Route::post('/permintaan/{permintaan}/tolak',          [PermintaanController::cl
 Route::post('/permintaan/{permintaan}/kirim-operator', [PermintaanController::class, 'kirimOperator'])->name('permintaan.kirim_operator');
 Route::post('/permintaan/{permintaan}/eksekusi',       [PermintaanController::class, 'eksekusi'])->name('permintaan.eksekusi');
 Route::patch('/permintaan/{permintaan}/batal',         [PermintaanController::class, 'batal'])->name('permintaan.batal');
+Route::post('/permintaan/{permintaan}/ttd-manajerial', [PermintaanController::class, 'ttdManajerial'])->name('permintaan.ttd_manajerial');
  
     // Stok
     Route::get('/stok', [StokController::class, 'index'])->name('stok.index');

@@ -14,12 +14,15 @@ class PermintaanBarang extends Model
         'status', 'dibuat_oleh', 'disetujui_oleh', 'dieksekusi_oleh',
         'tgl_diajukan', 'tgl_disetujui', 'catatan_pimpinan', 'ttd_pimpinan', 'nama_ttd_pimpinan',
         'tgl_dikirim_operator', 'tgl_selesai', 'catatan_operator', 'catatan_manajerial',
+        // ── TTD Manajerial (wajib sebelum diajukan) ──
+        'ttd_manajerial', 'nama_ttd_manajerial', 'tgl_ttd_manajerial',
     ];
     protected $casts = [
-        'tgl_diajukan'        => 'datetime',
-        'tgl_disetujui'       => 'datetime',
-        'tgl_dikirim_operator'=> 'datetime',
-        'tgl_selesai'         => 'datetime',
+        'tgl_diajukan'         => 'datetime',
+        'tgl_disetujui'        => 'datetime',
+        'tgl_dikirim_operator' => 'datetime',
+        'tgl_selesai'          => 'datetime',
+        'tgl_ttd_manajerial'   => 'datetime',
     ];
 
     // ── Relationships ─────────────────────────────────
